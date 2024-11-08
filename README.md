@@ -47,6 +47,8 @@ To reproduce this project, you'll need:
 ### Usage
 This project allows you to deploy a fully functional Mattermost server on AWS with minimal manual intervention. It's ideal for teams looking to set up their own secure, self-hosted chat solution.
 
+**Video Demo:** [Link](https://www.youtube.com/watch?v=ExGxrRk-42o)
+
 ## Prerequisites
 
 Before starting, make sure you have installed the necessary tools on your local machine:
