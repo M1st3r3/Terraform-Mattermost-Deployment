@@ -1,0 +1,159 @@
+---
+- name: Install and Configure Mattermost with SSL
+  hosts: mattermost
+  become: yes
+  vars:
+    hostname: "!_DNS_HOSTNAM_!"
+    mattermost_root: "/opt/mattermost"
+    certbot_email: "admin@{{ hostname }}"
+    noip_username: "!_NOIP_EMAIL_!"
+    noip_password: "!_NOIP_PASSWORD_!"
+
+  tasks:
+    - name: Retrieve the Public Address of the EC2 instance
+      set_fact:
+        host_ip: "{{ inventory_hostname }}"
+
+    - name: Update NOIP DNS Record with EC2 address
+      uri:
+        url: "https://dynupdate.no-ip.com/nic/update?hostname={{ hostname }}&myip={{ host_ip }}"
+        method: GET
+        url_username: "{{ noip_username }}"
+        url_password: "{{ noip_password }}"
+        force_basic_auth: yes
+        return_content: yes
+        validate_certs: yes
+      delegate_to: localhost
+      become: no
+      register: noip_response
+
+    - name: NOIP Response
+      debug:
+        var: noip_response
+      become: no
+
+    - name: Wait for DNS propagation
+      pause:
+        minutes: 1
+      become: no
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Upgrade packages
+      apt:
+        upgrade: yes
+
+    - name: Install packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - nginx
+          - certbot
+          - python3-certbot-nginx
+        state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name: docker-ce
+        state: present
+        update_cache: yes
+
+    - name: Ensure Docker service is started and enabled
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Install Docker Compose
+      get_url:
+        url: "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-{{ ansible_system }}-{{ ansible_architecture }}"
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+
+    - name: Create Directories for Mattermost
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: 2000
+        group: 2000
+        mode: '0755'
+      with_items:
+        - "{{ mattermost_root }}/config"
+        - "{{ mattermost_root }}/data"
+        - "{{ mattermost_root }}/logs"
+        - "{{ mattermost_root }}/plugins"
+        - "{{ mattermost_root }}/client/plugins"
+
+    - name: Configure Nginx for HTTP
+      template:
+        src: templates/nginx-http.conf.j2
+        dest: /etc/nginx/sites-available/mattermost
+        mode: '0644'
+
+    - name: Enable Mattermost site
+      file:
+        src: /etc/nginx/sites-available/mattermost
+        dest: /etc/nginx/sites-enabled/mattermost
+        state: link
+
+    - name: Disable default NGINX site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
+
+    - name: Generate SSL certificate with Certbot
+      command: >
+        certbot --nginx -d {{ hostname }}
+        --non-interactive --agree-tos
+        --email {{ certbot_email }}
+      args:
+        creates: "/etc/letsencrypt/live/{{ hostname }}/fullchain.pem"
+
+    - name: Configure Nginx for HTTPS
+      template:
+        src: templates/nginx-https.conf.j2
+        dest: /etc/nginx/sites-available/mattermost
+        mode: '0644'
+
+    - name: Enable Mattermost site
+      file:
+        src: /etc/nginx/sites-available/mattermost
+        dest: /etc/nginx/sites-enabled/mattermost
+        state: link
+
+    - name: Restart Nginx to enable HTTPS
+      service:
+        name: nginx
+        state: restarted
+
+    - name: Create docker-compose.yml file
+      template:
+        src: templates/docker-compose.yml.j2
+        dest: "{{ mattermost_root }}/docker-compose.yml"
+        mode: '0644'
+
+    - name: Launch Mattermost Containers
+      community.docker.docker_compose_v2:
+        project_src: "{{ mattermost_root }}"
+        state: present

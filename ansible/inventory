@@ -1,0 +1,2 @@
+[mattermost]
+!_TO_BE_REPLACED_IP_PUB_! ansible_user=ubuntu ansible_ssh_private_key_file=!_TO_BE_REPLACED_!
